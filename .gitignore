@@ -1,0 +1,17 @@
+﻿# Python
+__pycache__/
+*.pyc
+.venv/
+.env
+
+# Streamlit
+.streamlit/secrets.toml
+
+# Dados locais
+*.db
+*.sqlite
+*.sqlite3
+
+# VSCode / IDE
+.vscode/
+.idea/
