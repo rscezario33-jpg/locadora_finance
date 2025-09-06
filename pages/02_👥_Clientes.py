@@ -1,3 +1,4 @@
+﻿from session_helpers import require_company_with_picker
 import streamlit as st
 from db_core import get_conn
 
@@ -8,7 +9,7 @@ def require_company():
         st.stop()
 
 require_company()
-cid = st.session_state.company["id"]
+cid = require_company_with_picker()
 
 st.title("👥 Clientes")
 
@@ -30,3 +31,4 @@ st.subheader("Clientes da empresa")
 with get_conn() as conn:
     rows = conn.execute("SELECT * FROM clients WHERE company_id=? ORDER BY nome", (cid,)).fetchall()
 st.dataframe([{k: r[k] for k in r.keys()} for r in rows], use_container_width=True)
+

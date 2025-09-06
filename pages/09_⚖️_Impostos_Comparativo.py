@@ -1,3 +1,4 @@
+﻿from session_helpers import require_company_with_picker
 import streamlit as st
 import pandas as pd
 from db_core import get_conn
@@ -8,7 +9,7 @@ def require_company():
     if "company" not in st.session_state or st.session_state.company is None:
         st.stop()
 require_company()
-cid = st.session_state.company["id"]
+cid = require_company_with_picker()
 
 st.title("⚖️ Simulação de Impostos por Regime (parâmetros)")
 
@@ -87,3 +88,4 @@ else:
     col3.metric("Lucro Real (estimado)", f"R$ {out['lucro_real']:,.2f}".replace(",", "X").replace(".", ",").replace("X","."))
 
     st.caption("Obs.: modelo **simplificado** para estimativa. Ajuste as faixas/aliquotas em **tax_rules** e/ou evolua as fórmulas conforme as regras reais da empresa.")
+

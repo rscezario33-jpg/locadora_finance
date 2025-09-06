@@ -1,3 +1,4 @@
+﻿from session_helpers import require_company_with_picker
 import streamlit as st
 from db_core import get_conn
 
@@ -7,7 +8,7 @@ def require_company():
     if "company" not in st.session_state or st.session_state.company is None:
         st.stop()
 require_company()
-cid = st.session_state.company["id"]
+cid = require_company_with_picker()
 
 st.title("🛠️ Equipamentos & Manutenção")
 
@@ -85,3 +86,4 @@ with tab3:
         with get_conn() as conn:
             mans = conn.execute("SELECT * FROM equipment_maintenance WHERE equipment_id=? ORDER BY data DESC", (eid,)).fetchall()
         st.dataframe([{k: r[k] for k in r.keys()} for r in mans], use_container_width=True)
+

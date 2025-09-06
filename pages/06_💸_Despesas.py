@@ -1,3 +1,4 @@
+﻿from session_helpers import require_company_with_picker
 import streamlit as st
 from datetime import date
 from db_core import get_conn
@@ -9,7 +10,7 @@ def require_company():
     if "company" not in st.session_state or st.session_state.company is None:
         st.stop()
 require_company()
-cid = st.session_state.company["id"]
+cid = require_company_with_picker()
 
 st.title("💸 Despesas (a pagar)")
 
@@ -62,3 +63,4 @@ if st.button("Quitar selecionadas"):
         conn.commit()
     st.success("Parcelas quitadas.")
     st.rerun()
+

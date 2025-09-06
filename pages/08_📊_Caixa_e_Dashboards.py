@@ -1,3 +1,4 @@
+﻿from session_helpers import require_company_with_picker
 import streamlit as st
 import pandas as pd
 from db_core import get_conn
@@ -8,7 +9,7 @@ def require_company():
     if "company" not in st.session_state or st.session_state.company is None:
         st.stop()
 require_company()
-cid = st.session_state.company["id"]
+cid = require_company_with_picker()
 
 st.title("📊 Fluxo de Caixa e KPIs")
 
@@ -69,3 +70,4 @@ else:
     df = pd.concat([df_in, df_out], ignore_index=True)
     fig = px.line(df, x="data", y="valor", color="tipo", markers=True)
     st.plotly_chart(fig, use_container_width=True)
+

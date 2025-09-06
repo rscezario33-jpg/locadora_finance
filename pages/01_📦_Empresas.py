@@ -1,3 +1,4 @@
+﻿from session_helpers import require_company_with_picker
 import streamlit as st
 from db_core import get_conn
 from utils import cnpj_mask
@@ -50,3 +51,4 @@ with colB:
                     else:
                         st.error("Usuário não encontrado.")
         st.divider()
+

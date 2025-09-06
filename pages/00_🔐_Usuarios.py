@@ -1,3 +1,4 @@
+﻿from session_helpers import require_company_with_picker
 # pages/00_🔐_Usuarios.py
 import streamlit as st
 from db_core import get_conn
@@ -93,3 +94,4 @@ if users:
                 conn.commit()
             st.success("Vínculos atualizados.")
             st.rerun()
+

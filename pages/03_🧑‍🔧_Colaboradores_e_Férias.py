@@ -1,3 +1,4 @@
+﻿from session_helpers import require_company_with_picker
 import streamlit as st
 from datetime import date, datetime
 from db_core import get_conn
@@ -10,7 +11,7 @@ def require_company():
         st.stop()
 
 require_company()
-cid = st.session_state.company["id"]
+cid = require_company_with_picker()
 
 st.title("🧑‍🔧 Colaboradores & Férias")
 
@@ -101,3 +102,4 @@ if emp_name:
     with get_conn() as conn:
         af = conn.execute("SELECT * FROM leaves WHERE employee_id=? ORDER BY inicio DESC", (emp_id,)).fetchall()
     st.dataframe([{k: r[k] for k in r.keys()} for r in af], use_container_width=True)
+
