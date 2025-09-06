@@ -1,26 +1,17 @@
-# Núcleo do app
 streamlit>=1.37,<2
 pandas>=2.1,<3
 numpy>=1.26,<3
 python-dateutil>=2.9,<3
-
-# Segurança (login/senha)
 bcrypt>=4,<5
-
-# UI/UX e visual
-plotly>=5.20,<6            # gráficos interativos
-streamlit-aggrid>=0.3.4    # grid interativo (edição, seleção, filtros)
-streamlit-extras>=0.4.3    # componentes úteis (badges, steps, toggle, etc.)
-
-# Exportações e relatórios
-openpyxl>=3.1,<4           # ler/escrever XLSX
-XlsxWriter>=3.2,<4         # escrever XLSX com formatação
-pyarrow>=16,<20            # Parquet/Feather e aceleração de IO
-Pillow>=10,<11             # imagens (logo em PDF/OS)
-reportlab>=3.6,<4          # geração de PDF pura em Python (funciona no Streamlit Cloud)
-jinja2>=3.1,<4             # templates (HTML/OS, documentos)
-babel>=2.14,<3             # formatação de moeda/locale
-
-# Validações e utilidades
+plotly>=5.20,<6
+streamlit-aggrid>=0.3.4
+streamlit-extras>=0.4.3
+openpyxl>=3.1,<4
+XlsxWriter>=3.2,<4
+pyarrow>=16,<20
+Pillow>=10,<11
+fpdf2>=2.7,<3
+jinja2>=3.1,<4
+babel>=2.14,<3
 pydantic>=2.7,<3
-validators                 # validação de e-mail/URL etc.
+validators
