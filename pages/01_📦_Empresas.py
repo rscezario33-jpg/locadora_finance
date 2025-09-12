@@ -1,4 +1,7 @@
 ﻿# pages/01_📦_Empresas.py
+import os, csv, re, requests
+from functools import lru_cache
+
 import streamlit as st
 from db_core import get_conn
 from utils import cnpj_mask
@@ -17,16 +20,181 @@ def is_admin() -> bool:
     return bool(st.session_state.user and st.session_state.user.get("role") == "admin")
 
 
-def get_cnae_desc(code: str) -> str | None:
-    code = (code or "").strip().replace(".", "").replace("-", "").replace("/", "")
-    if not code:
-        return None
+# ===== CNAE: garantia de tabela + seed opcional + lookup com cache/APIs =====
+def ensure_cnae_table():
+    """
+    Garante a existência da tabela CNAE (SQLite e Postgres/Supabase).
+    Schema mínimo: code TEXT PRIMARY KEY, descricao TEXT NOT NULL.
+    """
     with get_conn() as conn:
-        row = conn.execute("SELECT descricao FROM cnae WHERE code=?", (code,)).fetchone()
-    return row["descricao"] if row else None
+        conn.execute(
+            """
+            CREATE TABLE IF NOT EXISTS cnae (
+                code TEXT PRIMARY KEY,
+                descricao TEXT NOT NULL
+            )
+            """
+        )
+        conn.commit()
 
 
+def seed_cnae_if_empty():
+    """
+    Se existir assets/cnae.csv (colunas: code,descricao ou codigo,descricao)
+    e a tabela estiver vazia, faz o carregamento inicial.
+    Não falha a página se o arquivo não existir.
+    """
+    # caminho relativo ao repo: pages/../assets/cnae.csv
+    base_dir = os.path.abspath(os.path.join(os.path.dirname(__file__), ".."))
+    csv_path = os.path.join(base_dir, "assets", "cnae.csv")
+
+    try:
+        with get_conn() as conn:
+            row = conn.execute("SELECT COUNT(1) AS n FROM cnae").fetchone()
+            n = row["n"] if isinstance(row, dict) and "n" in row else (row[0] if row else 0)
+            if n and int(n) > 0:
+                return  # já tem dados
+    except Exception:
+        # se der erro por ausência, tenta criar e seguir
+        try:
+            ensure_cnae_table()
+        except Exception:
+            return
+
+    if not os.path.exists(csv_path):
+        return
+
+    rows_to_insert = []
+    try:
+        with open(csv_path, "r", encoding="utf-8-sig") as f:
+            rdr = csv.DictReader(f)
+            for r in rdr:
+                code = (r.get("code") or r.get("codigo") or "").strip()
+                desc = (r.get("descricao") or r.get("descrição") or "").strip()
+                if code and desc:
+                    # normaliza: só números (remove ., - e /)
+                    norm = re.sub(r"\D", "", code)
+                    rows_to_insert.append((norm, desc))
+    except Exception:
+        return
+
+    if not rows_to_insert:
+        return
+
+    try:
+        with get_conn() as conn:
+            for code, desc in rows_to_insert:
+                try:
+                    conn.execute("INSERT INTO cnae(code, descricao) VALUES (?, ?)", (code, desc))
+                except Exception:
+                    # se já existe, tenta atualizar a descrição
+                    try:
+                        conn.execute("UPDATE cnae SET descricao=? WHERE code=?", (desc, code))
+                    except Exception:
+                        pass
+            conn.commit()
+    except Exception:
+        # não derruba a página por causa do seed
+        pass
+
+
+@lru_cache(maxsize=4096)
+def _lookup_local_cnae(code_norm: str) -> str | None:
+    """
+    Consulta local (DB) por descrição do CNAE; retorna None se não achar.
+    Tolerante a colunas 'code' ou 'codigo'.
+    """
+    if not code_norm:
+        return None
+
+    ensure_cnae_table()
+    try:
+        with get_conn() as conn:
+            row = conn.execute("SELECT descricao FROM cnae WHERE code=?", (code_norm,)).fetchone()
+            if row:
+                return row["descricao"] if isinstance(row, dict) and "descricao" in row else (row[0] if row else None)
+
+            # fallback p/ bases antigas que usavam "codigo"
+            row2 = conn.execute("SELECT descricao FROM cnae WHERE codigo=?", (code_norm,)).fetchone()
+            if row2:
+                return row2["descricao"] if isinstance(row2, dict) and "descricao" in row2 else (row2[0] if row2 else None)
+    except Exception:
+        try:
+            ensure_cnae_table()
+        except Exception:
+            pass
+    return None
+
+
+@st.cache_data(ttl=86400, show_spinner=False)  # 24h
+def consulta_cnae_ibge(code_norm: str) -> str | None:
+    """
+    Consulta a descrição no IBGE (CNAE API) e retorna a descrição.
+    - 7+ dígitos: endpoint de SUBCLASSE
+    - 4 dígitos: endpoint de CLASSE
+    """
+    if not code_norm:
+        return None
+
+    if len(code_norm) >= 7:
+        url = f"https://servicodados.ibge.gov.br/api/v2/cnae/subclasses/{code_norm[:7]}"
+    elif len(code_norm) >= 4:
+        url = f"https://servicodados.ibge.gov.br/api/v2/cnae/classes/{code_norm[:4]}"
+    else:
+        return None
+
+    try:
+        r = requests.get(url, timeout=6)
+        r.raise_for_status()
+        data = r.json()
+        item = data[0] if isinstance(data, list) and data else (data if isinstance(data, dict) else None)
+        if not item:
+            return None
+        desc = item.get("descricao") or item.get("titulo") or item.get("descricaoCompleta")
+        return desc.strip() if isinstance(desc, str) else None
+    except Exception:
+        return None
+
+
+def get_cnae_desc(code: str) -> str | None:
+    """
+    1) Busca localmente na tabela cnae (cache em memória).
+    2) Fallback: IBGE API -> grava local -> retorna.
+    """
+    code_norm = re.sub(r"\D", "", (code or ""))
+    if not code_norm:
+        return None
+
+    # 1) tenta local
+    desc = _lookup_local_cnae(code_norm)
+    if desc:
+        return desc
+
+    # 2) tenta IBGE e persiste
+    desc = consulta_cnae_ibge(code_norm)
+    if desc:
+        try:
+            with get_conn() as conn:
+                try:
+                    conn.execute("INSERT INTO cnae(code, descricao) VALUES (?,?)", (code_norm, desc))
+                except Exception:
+                    try:
+                        conn.execute("UPDATE cnae SET descricao=? WHERE code=?", (desc, code_norm))
+                    except Exception:
+                        pass
+                conn.commit()
+            # limpa cache para refletir o novo registro (simples e seguro)
+            _lookup_local_cnae.cache_clear()
+        except Exception:
+            pass
+    return desc
+
+
+# Garantias mínimas na carga da página
 require_login()
+ensure_cnae_table()
+seed_cnae_if_empty()
+
 st.title("📦 Empresas")
 
 # ===========================
@@ -271,10 +439,21 @@ else:
                         with get_conn() as conn:
                             u = conn.execute("SELECT id FROM users WHERE email=?", (email,)).fetchone()
                             if u:
-                                conn.execute(
-                                    "INSERT OR IGNORE INTO user_companies(user_id, company_id) VALUES (?,?)",
-                                    (u["id"], e["id"]),
-                                )
+                                # Compat: SQLite (INSERT OR IGNORE) e Postgres (ON CONFLICT DO NOTHING)
+                                try:
+                                    conn.execute(
+                                        "INSERT OR IGNORE INTO user_companies(user_id, company_id) VALUES (?,?)",
+                                        (u["id"], e["id"]),
+                                    )
+                                except Exception:
+                                    try:
+                                        conn.execute(
+                                            "INSERT INTO user_companies(user_id, company_id) VALUES (?,?) "
+                                            "ON CONFLICT (user_id, company_id) DO NOTHING",
+                                            (u["id"], e["id"]),
+                                        )
+                                    except Exception:
+                                        pass
                                 conn.commit()
                                 st.success("Usuário vinculado.")
                                 st.rerun()
