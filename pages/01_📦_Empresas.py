@@ -20,6 +20,21 @@ def is_admin() -> bool:
     return bool(st.session_state.user and st.session_state.user.get("role") == "admin")
 
 
+def rget(row, key, default=""):
+    """Compat: funciona para dict (PG) e sqlite3.Row (SQLite)."""
+    try:
+        if isinstance(row, dict):
+            return row.get(key, default)
+        if hasattr(row, "keys"):
+            return row[key] if key in row.keys() else default
+        return row[key] if key in row else default
+    except Exception:
+        try:
+            return row[key]
+        except Exception:
+            return default
+
+
 # ===== CNAE: garantia de tabela + seed opcional + lookup com cache/APIs =====
 def ensure_cnae_table():
     """
@@ -183,7 +198,6 @@ def get_cnae_desc(code: str) -> str | None:
                     except Exception:
                         pass
                 conn.commit()
-            # limpa cache para refletir o novo registro (simples e seguro)
             _lookup_local_cnae.cache_clear()
         except Exception:
             pass
@@ -262,11 +276,11 @@ with st.expander("➕ Nova empresa", expanded=is_admin()):
                     conn.execute(
                         """
                         INSERT INTO companies (
-  cnpj, razao_social, nome_fantasia, endereco, regime,
-  resp_cpf, resp_nome, resp_telefone, resp_email,
-  cep, logradouro, complemento, numero, bairro, cidade, estado,
-  cnae_principal, cnae_secundarios
-) VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)
+                          cnpj, razao_social, nome_fantasia, endereco, regime,
+                          resp_cpf, resp_nome, resp_telefone, resp_email,
+                          cep, logradouro, complemento, numero, bairro, cidade, estado,
+                          cnae_principal, cnae_secundarios
+                        ) VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)
                         """,
                         (
                             cnpj, razao, fantasia, "", regime,
@@ -316,7 +330,7 @@ else:
                 st.markdown("**Dados básicos**")
                 st.text_input("CNPJ", e["cnpj"], key=f"cnpj{e['id']}", disabled=not is_admin())
                 st.text_input("Razão Social", e["razao_social"], key=f"razao{e['id']}", disabled=not is_admin())
-                st.text_input("Nome Fantasia", e.get("nome_fantasia") or "", key=f"fantasia{e['id']}", disabled=not is_admin())
+                st.text_input("Nome Fantasia", rget(e, "nome_fantasia", ""), key=f"fantasia{e['id']}", disabled=not is_admin())
                 reg_list = ["simples", "lucro_real", "lucro_presumido"]
                 st.selectbox(
                     "Regime",
@@ -327,7 +341,7 @@ else:
                 )
 
                 st.markdown("**Endereço**")
-                st.text_input("CEP", e.get("cep", "") or "", key=f"cep{e['id']}", disabled=not is_admin())
+                st.text_input("CEP", rget(e, "cep", ""), key=f"cep{e['id']}", disabled=not is_admin())
                 if is_admin() and st.button("↺ Buscar CEP", key=f"buscacep{e['id']}"):
                     d = busca_cep(st.session_state[f"cep{e['id']}"])
                     if d:
@@ -339,27 +353,32 @@ else:
                     else:
                         st.warning("CEP não encontrado.")
 
-                st.text_input("Logradouro", e.get("logradouro", "") or "", key=f"log{e['id']}", disabled=not is_admin())
-                st.text_input("Complemento", e.get("complemento", "") or "", key=f"comp{e['id']}", disabled=not is_admin())
-                st.text_input("Número", e.get("numero", "") or "", key=f"num{e['id']}", disabled=not is_admin())
-                st.text_input("Bairro", e.get("bairro", "") or "", key=f"bai{e['id']}", disabled=not is_admin())
-                st.text_input("Cidade", e.get("cidade", "") or "", key=f"cid{e['id']}", disabled=not is_admin())
-                st.text_input("Estado", e.get("estado", "") or "", key=f"uf{e['id']}", disabled=not is_admin())
+                st.text_input("Logradouro", rget(e, "logradouro", ""), key=f"log{e['id']}", disabled=not is_admin())
+                st.text_input("Complemento", rget(e, "complemento", ""), key=f"comp{e['id']}", disabled=not is_admin())
+                st.text_input("Número", rget(e, "numero", ""), key=f"num{e['id']}", disabled=not is_admin())
+                st.text_input("Bairro", rget(e, "bairro", ""), key=f"bai{e['id']}", disabled=not is_admin())
+                st.text_input("Cidade", rget(e, "cidade", ""), key=f"cid{e['id']}", disabled=not is_admin())
+                st.text_input("Estado", rget(e, "estado", ""), key=f"uf{e['id']}", disabled=not is_admin())
 
             # --- Coluna 2: responsável + CNAE
             with col2:
                 st.markdown("**Responsável**")
-                st.text_input("CPF", e.get("resp_cpf", "") or "", key=f"rcpf{e['id']}", disabled=not is_admin())
-                st.text_input("Nome", e.get("resp_nome", "") or "", key=f"rnom{e['id']}", disabled=not is_admin())
-                st.text_input("Telefone", e.get("resp_telefone", "") or "", key=f"rtel{e['id']}", disabled=not is_admin())
-                st.text_input("E-mail", e.get("resp_email", "") or "", key=f"rmail{e['id']}", disabled=not is_admin())
+                st.text_input("CPF", rget(e, "resp_cpf", ""), key=f"rcpf{e['id']}", disabled=not is_admin())
+                st.text_input("Nome", rget(e, "resp_nome", ""), key=f"rnom{e['id']}", disabled=not is_admin())
+                st.text_input("Telefone", rget(e, "resp_telefone", ""), key=f"rtel{e['id']}", disabled=not is_admin())
+                st.text_input("E-mail", rget(e, "resp_email", ""), key=f"rmail{e['id']}", disabled=not is_admin())
 
                 st.markdown("**CNAE**")
-                st.text_input("CNAE principal (código)", e.get("cnae_principal", "") or "", key=f"cnae1{e['id']}", disabled=not is_admin())
-                desc1 = get_cnae_desc(st.session_state.get(f"cnae1{e['id']}", e.get("cnae_principal", "")))
+                st.text_input("CNAE principal (código)", rget(e, "cnae_principal", ""), key=f"cnae1{e['id']}", disabled=not is_admin())
+                desc1 = get_cnae_desc(st.session_state.get(f"cnae1{e['id']}", rget(e, "cnae_principal", "")))
                 st.caption(f"Atividade principal: {desc1 or '— código não encontrado na tabela CNAE'}")
-                st.text_input("CNAEs secundários (códigos separados por vírgula)", e.get("cnae_secundarios", "") or "", key=f"cnae2{e['id']}", disabled=not is_admin())
-                secs = [x.strip() for x in st.session_state.get(f"cnae2{e['id']}", e.get("cnae_secundarios", "") or "").split(",") if x.strip()]
+                st.text_input(
+                    "CNAEs secundários (códigos separados por vírgula)",
+                    rget(e, "cnae_secundarios", ""),
+                    key=f"cnae2{e['id']}",
+                    disabled=not is_admin(),
+                )
+                secs = [x.strip() for x in st.session_state.get(f"cnae2{e['id']}", rget(e, "cnae_secundarios", "")).split(",") if x.strip()]
                 if secs:
                     found = []
                     for c in secs:
@@ -458,4 +477,3 @@ else:
                             else:
                                 st.error("Usuário não encontrado.")
         st.divider()
-
