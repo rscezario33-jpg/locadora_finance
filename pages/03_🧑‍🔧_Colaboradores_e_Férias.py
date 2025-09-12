@@ -359,7 +359,6 @@ if emp_name:
                         {"Item": "FGTS (8%) – depósito", "R$": r["fgts"]},
                     ]
                 )
-                st.dataframe(resumo, use_container_width=True, hide_index=True)
 
                 # Persistir registro
                 with get_conn() as conn:
@@ -385,30 +384,47 @@ if emp_name:
                     conn.commit()
                 st.success("Férias lançadas.")
 
-                # export quick buttons
-                buf_csv = io.StringIO()
-                resumo.to_csv(buf_csv, index=False, sep=";", decimal=",")
+                # Guarda para exibir/baixar FORA do form
+                st.session_state["ferias_resumo_df"] = resumo
+                st.session_state["ferias_resumo_meta"] = {"emp_id": emp_id, "ini": ini.isoformat()}
+
+        # Fora do form: mostra o resumo e botões de download
+        if "ferias_resumo_df" in st.session_state:
+            resumo = st.session_state["ferias_resumo_df"]
+            meta = st.session_state.get("ferias_resumo_meta", {})
+            st.dataframe(resumo, use_container_width=True, hide_index=True)
+
+            # CSV
+            buf_csv = io.StringIO()
+            resumo.to_csv(buf_csv, index=False, sep=";", decimal=",")
+            st.download_button(
+                "⬇️ CSV (resumo)",
+                buf_csv.getvalue().encode("utf-8"),
+                file_name=f"ferias_{meta.get('emp_id','')}_{meta.get('ini','')}.csv",
+                mime="text/csv",
+                key="dl_csv_resumo",
+            )
+
+            # XLSX
+            try:
+                import xlsxwriter  # noqa: F401
+                xbuf = io.BytesIO()
+                with pd.ExcelWriter(xbuf, engine="xlsxwriter") as w:
+                    resumo.to_excel(w, index=False, sheet_name="Férias")
                 st.download_button(
-                    "⬇️ CSV (resumo)",
-                    buf_csv.getvalue().encode("utf-8"),
-                    file_name=f"ferias_{emp_id}_{ini.isoformat()}.csv",
-                    mime="text/csv",
-                    key="dl_csv_resumo",
+                    "⬇️ XLSX (resumo)",
+                    xbuf.getvalue(),
+                    file_name=f"ferias_{meta.get('emp_id','')}_{meta.get('ini','')}.xlsx",
+                    mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
+                    key="dl_xlsx_resumo",
                 )
-                try:
-                    import xlsxwriter  # noqa: F401
-                    xbuf = io.BytesIO()
-                    with pd.ExcelWriter(xbuf, engine="xlsxwriter") as w:
-                        resumo.to_excel(w, index=False, sheet_name="Férias")
-                    st.download_button(
-                        "⬇️ XLSX (resumo)",
-                        xbuf.getvalue(),
-                        file_name=f"ferias_{emp_id}_{ini.isoformat()}.xlsx",
-                        mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
-                        key="dl_xlsx_resumo",
-                    )
-                except Exception:
-                    st.info("Para XLSX, instale 'xlsxwriter'.")
+            except Exception:
+                st.info("Para XLSX, instale 'xlsxwriter'.")
+
+            if st.button("Limpar resumo", key="clear_resumo"):
+                st.session_state.pop("ferias_resumo_df", None)
+                st.session_state.pop("ferias_resumo_meta", None)
+                st.rerun()
 
     with right:
         st.markdown("**Lançar afastamento**")
