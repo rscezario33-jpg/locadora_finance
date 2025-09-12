@@ -3,7 +3,7 @@ import io
 import pandas as pd
 import streamlit as st
 from session_helpers import require_company_with_picker
-from db_core import get_conn
+from db_core import get_conn, init_schema_and_seed
 from utils_cep import busca_cep
 
 # (opcional) permissões finas por página/empresa
@@ -14,14 +14,34 @@ except Exception:
 
 st.set_page_config(page_title="👥 Clientes", layout="wide")
 
+# Garante o schema mínimo (users, companies, clients, etc.)
+init_schema_and_seed()
+
 # Exige login e seleciona/garante empresa ativa
 cid = require_company_with_picker()
+
 
 def perm(action: str) -> bool:
     """action: view|create|edit|delete"""
     if _perm_check is None:
         return True  # permissões ainda não habilitadas: permite tudo
     return _perm_check("CLIENTES", action, cid)
+
+
+def rget(row, key, default=""):
+    """Compat: funciona para dict (PG) e sqlite3.Row (SQLite)."""
+    try:
+        if isinstance(row, dict):
+            return row.get(key, default)
+        if hasattr(row, "keys"):
+            return row[key] if key in row.keys() else default
+        return row[key] if key in row else default
+    except Exception:
+        try:
+            return row[key]
+        except Exception:
+            return default
+
 
 st.title("👥 Clientes")
 
@@ -62,7 +82,8 @@ with st.expander("➕ Novo cliente", expanded=True):
         ok = st.form_submit_button("Salvar cliente", type="primary")
         if ok:
             if not perm("create"):
-                st.error("Você não tem permissão para incluir clientes."); st.stop()
+                st.error("Você não tem permissão para incluir clientes.")
+                st.stop()
             if not nome:
                 st.warning("Informe ao menos o Nome/Razão Social.")
             else:
@@ -91,7 +112,8 @@ st.divider()
 #      Lista / Edição
 # ===========================
 if not perm("view"):
-    st.error("Você não tem permissão para visualizar clientes."); st.stop()
+    st.error("Você não tem permissão para visualizar clientes.")
+    st.stop()
 
 # Filtro rápido
 colf1, colf2 = st.columns([2, 1])
@@ -100,20 +122,37 @@ with colf1:
 with colf2:
     ordenar = st.selectbox("Ordenar por", ["nome", "created_at", "doc"], index=0)
 
+# Busca com whitelist para ORDER BY
 with get_conn() as conn:
+    valid_orders = {
+        "nome": "nome",
+        "doc": "doc",
+        "email": "email",
+        "phone": "phone",
+        "id": "id",
+        "created_at": "created_at",
+    }
+    order_by = valid_orders.get(str(ordenar).lower(), "nome")
+
     if q.strip():
         like = f"%{q.strip()}%"
         rows = conn.execute(
             f"""
             SELECT * FROM clients
-            WHERE company_id=? AND (nome LIKE ? OR doc LIKE ? OR email LIKE ? OR phone LIKE ?)
-            ORDER BY {ordenar}
+            WHERE company_id=?
+              AND (
+                   nome LIKE ?
+                OR COALESCE(doc,'') LIKE ?
+                OR COALESCE(email,'') LIKE ?
+                OR COALESCE(phone,'') LIKE ?
+              )
+            ORDER BY {order_by}
             """,
             (cid, like, like, like, like),
         ).fetchall()
     else:
         rows = conn.execute(
-            f"SELECT * FROM clients WHERE company_id=? ORDER BY {ordenar}",
+            f"SELECT * FROM clients WHERE company_id=? ORDER BY {order_by}",
             (cid,),
         ).fetchall()
 
@@ -123,17 +162,17 @@ if not rows:
     st.info("Nenhum cliente encontrado.")
 else:
     for r in rows:
-        header = f"**{r['nome']}**  |  {(r.get('doc') or '')}  |  {(r.get('email') or '')}"
+        header = f"**{rget(r,'nome','')}**  |  {rget(r,'doc','')}  |  {rget(r,'email','')}"
         with st.expander(header, expanded=False):
             c1, c2, c3 = st.columns([1.4, 1, 1])
             with c1:
-                st.text_input("Nome/Razão Social", r["nome"], key=f"n{r['id']}")
-                st.text_input("E-mail", r.get("email", "") or "", key=f"e{r['id']}")
+                st.text_input("Nome/Razão Social", rget(r, "nome", ""), key=f"n{r['id']}")
+                st.text_input("E-mail", rget(r, "email", ""), key=f"e{r['id']}")
             with c2:
-                st.text_input("CNPJ/CPF", r.get("doc", "") or "", key=f"d{r['id']}")
-                st.text_input("Telefone", r.get("phone", "") or "", key=f"p{r['id']}")
+                st.text_input("CNPJ/CPF", rget(r, "doc", ""), key=f"d{r['id']}")
+                st.text_input("Telefone", rget(r, "phone", ""), key=f"p{r['id']}")
             with c3:
-                st.text_input("CEP", r.get("cep", "") or "", key=f"cep{r['id']}")
+                st.text_input("CEP", rget(r, "cep", ""), key=f"cep{r['id']}")
                 if st.button("↺ Buscar CEP", key=f"b{r['id']}"):
                     d = busca_cep(st.session_state[f"cep{r['id']}"])
                     if d:
@@ -147,23 +186,24 @@ else:
 
             c4, c5, c6 = st.columns([2, 1, 1])
             with c4:
-                st.text_input("Logradouro", r.get("logradouro", "") or "", key=f"log{r['id']}")
+                st.text_input("Logradouro", rget(r, "logradouro", ""), key=f"log{r['id']}")
             with c5:
-                st.text_input("Número", r.get("numero", "") or "", key=f"num{r['id']}")
+                st.text_input("Número", rget(r, "numero", ""), key=f"num{r['id']}")
             with c6:
-                st.text_input("Complemento", r.get("complemento", "") or "", key=f"comp{r['id']}")
+                st.text_input("Complemento", rget(r, "complemento", ""), key=f"comp{r['id']}")
 
             c7, c8 = st.columns([1, 1])
             with c7:
-                st.text_input("Bairro", r.get("bairro", "") or "", key=f"bai{r['id']}")
+                st.text_input("Bairro", rget(r, "bairro", ""), key=f"bai{r['id']}")
             with c8:
-                st.text_input("Cidade", r.get("cidade", "") or "", key=f"cid{r['id']}")
-            st.text_input("Estado", r.get("estado", "") or "", key=f"uf{r['id']}")
+                st.text_input("Cidade", rget(r, "cidade", ""), key=f"cid{r['id']}")
+            st.text_input("Estado", rget(r, "estado", ""), key=f"uf{r['id']}")
 
             a1, a2 = st.columns([1, 1])
             if a1.button("Salvar", key=f"sv{r['id']}"):
                 if not perm("edit"):
-                    st.error("Você não tem permissão para editar."); st.stop()
+                    st.error("Você não tem permissão para editar.")
+                    st.stop()
                 with get_conn() as conn:
                     conn.execute(
                         """
@@ -192,7 +232,8 @@ else:
 
             if a2.button("Excluir", key=f"dl{r['id']}"):
                 if not perm("delete"):
-                    st.error("Você não tem permissão para excluir."); st.stop()
+                    st.error("Você não tem permissão para excluir.")
+                    st.stop()
                 with get_conn() as conn:
                     conn.execute("DELETE FROM clients WHERE id=?", (r["id"],))
                     conn.commit()
