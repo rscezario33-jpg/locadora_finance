@@ -185,7 +185,7 @@ def get_conn():
 # =============================================================================
 def init_schema_and_seed():
     """
-    Cria o schema mínimo e garante colunas requeridas pelos módulos.
+    Cria o schema mínimo e garante colunas requeridas pelos módulos (Home, Empresas, Clientes).
     """
 
     def _exec_silent(conn, sql: str, params: tuple = ()):
@@ -272,7 +272,6 @@ def init_schema_and_seed():
                 )
                 """,
             )
-
         # Colunas utilizadas pela página Empresas (01)
         _ensure_col(conn, "companies", "resp_cpf", "TEXT")
         _ensure_col(conn, "companies", "resp_nome", "TEXT")
@@ -288,16 +287,48 @@ def init_schema_and_seed():
         _ensure_col(conn, "companies", "cnae_principal", "TEXT")
         _ensure_col(conn, "companies", "cnae_secundarios", "TEXT")
 
-        # Opcional: constraint dos valores do regime (não falha se não suportar)
-        try:
-            if not USE_PG:
-                # Em SQLite, CHECK simples
-                conn.execute(
-                    "CREATE TABLE IF NOT EXISTS _companies_regime_check (id INTEGER)"
-                )  # no-op para marcar que já tentamos
-            # Em PG poderíamos adicionar um CHECK, mas isso exige DDL com nome; omitido por simplicidade.
-        except Exception:
-            pass
+        # --------------- clients ---------------
+        # (módulo Clientes / página 02)
+        if USE_PG:
+            _exec_silent(
+                conn,
+                """
+                CREATE TABLE IF NOT EXISTS clients (
+                  id BIGSERIAL PRIMARY KEY,
+                  company_id BIGINT NOT NULL REFERENCES companies(id) ON DELETE CASCADE,
+                  nome TEXT NOT NULL,
+                  doc TEXT,
+                  email TEXT,
+                  phone TEXT,
+                  address TEXT,
+                  created_at TIMESTAMPTZ DEFAULT NOW()
+                )
+                """,
+            )
+        else:
+            _exec_silent(
+                conn,
+                """
+                CREATE TABLE IF NOT EXISTS clients (
+                  id INTEGER PRIMARY KEY AUTOINCREMENT,
+                  company_id INTEGER NOT NULL REFERENCES companies(id) ON DELETE CASCADE,
+                  nome TEXT NOT NULL,
+                  doc TEXT,
+                  email TEXT,
+                  phone TEXT,
+                  address TEXT,
+                  created_at TEXT DEFAULT CURRENT_TIMESTAMP
+                )
+                """,
+            )
+        # Garante colunas que páginas podem usar
+        _ensure_col(conn, "clients", "doc", "TEXT")
+        _ensure_col(conn, "clients", "email", "TEXT")
+        _ensure_col(conn, "clients", "phone", "TEXT")
+        _ensure_col(conn, "clients", "address", "TEXT")
+        _ensure_col(conn, "clients", "created_at", "TEXT" if not USE_PG else "TIMESTAMPTZ")
+        # Índice por empresa
+        _exec_silent(conn, "CREATE INDEX IF NOT EXISTS idx_clients_company_id ON clients(company_id)")
 
         # --------------- user_companies ---------------
         if USE_PG:
