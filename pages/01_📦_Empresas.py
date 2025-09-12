@@ -262,13 +262,11 @@ with st.expander("➕ Nova empresa", expanded=is_admin()):
                     conn.execute(
                         """
                         INSERT INTO companies (
-                          cnpj, razao_social, nome_fantasia, endereco, regime,
-                          resp_cpf, resp_nome, resp_telefone, resp_email,
-                          cep, logradouro, complemento, numero, bairro, cidade, estado,
-                          cnae_principal, cnae_secundarios
-                        ) VALUES (?,?,?,?,?,
-                                  ?,?,?,?,
-                                  ?,?,?,?,?,?, ?,?)
+  cnpj, razao_social, nome_fantasia, endereco, regime,
+  resp_cpf, resp_nome, resp_telefone, resp_email,
+  cep, logradouro, complemento, numero, bairro, cidade, estado,
+  cnae_principal, cnae_secundarios
+) VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)
                         """,
                         (
                             cnpj, razao, fantasia, "", regime,
@@ -460,3 +458,4 @@ else:
                             else:
                                 st.error("Usuário não encontrado.")
         st.divider()
+
