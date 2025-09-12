@@ -301,6 +301,13 @@ def init_schema_and_seed():
                   email TEXT,
                   phone TEXT,
                   address TEXT,
+                  cep TEXT,
+                  logradouro TEXT,
+                  complemento TEXT,
+                  numero TEXT,
+                  bairro TEXT,
+                  cidade TEXT,
+                  estado TEXT,
                   created_at TIMESTAMPTZ DEFAULT NOW()
                 )
                 """,
@@ -317,6 +324,13 @@ def init_schema_and_seed():
                   email TEXT,
                   phone TEXT,
                   address TEXT,
+                  cep TEXT,
+                  logradouro TEXT,
+                  complemento TEXT,
+                  numero TEXT,
+                  bairro TEXT,
+                  cidade TEXT,
+                  estado TEXT,
                   created_at TEXT DEFAULT CURRENT_TIMESTAMP
                 )
                 """,
@@ -326,6 +340,13 @@ def init_schema_and_seed():
         _ensure_col(conn, "clients", "email", "TEXT")
         _ensure_col(conn, "clients", "phone", "TEXT")
         _ensure_col(conn, "clients", "address", "TEXT")
+        _ensure_col(conn, "clients", "cep", "TEXT")
+        _ensure_col(conn, "clients", "logradouro", "TEXT")
+        _ensure_col(conn, "clients", "complemento", "TEXT")
+        _ensure_col(conn, "clients", "numero", "TEXT")
+        _ensure_col(conn, "clients", "bairro", "TEXT")
+        _ensure_col(conn, "clients", "cidade", "TEXT")
+        _ensure_col(conn, "clients", "estado", "TEXT")
         _ensure_col(conn, "clients", "created_at", "TEXT" if not USE_PG else "TIMESTAMPTZ")
         # Índice por empresa
         _exec_silent(conn, "CREATE INDEX IF NOT EXISTS idx_clients_company_id ON clients(company_id)")
