@@ -4,7 +4,7 @@ from __future__ import annotations
 
 import io
 from datetime import date, datetime, timedelta
-from typing import List, Tuple, Optional, Dict, Any
+from typing import List, Dict, Optional
 
 import pandas as pd
 import streamlit as st
@@ -20,7 +20,6 @@ st.set_page_config(page_title="🧑‍🔧 Colaboradores & Férias", layout="wid
 # ==============================
 # Helpers / Schema
 # ==============================
-
 def require_company():
     if "company" not in st.session_state or st.session_state.company is None:
         st.stop()
@@ -78,7 +77,6 @@ def ensure_schema():
             )
             """
         )
-
         # cash ledger (entrada/saída)
         conn.execute(
             """
@@ -151,9 +149,15 @@ def calc_irrf(base: float, dependentes: int = 0, usar_desc_simpl: bool = True) -
     return 0.0
 
 
-def calc_ferias(salario: float, dias: int, media_adic: float = 0.0,
-                vender_dias: int = 0, inss_incide_terco: bool = True,
-                dependentes: int = 0, usar_desc_simpl: bool = True) -> Dict[str, float]:
+def calc_ferias(
+    salario: float,
+    dias: int,
+    media_adic: float = 0.0,
+    vender_dias: int = 0,
+    inss_incide_terco: bool = True,
+    dependentes: int = 0,
+    usar_desc_simpl: bool = True,
+) -> Dict[str, float]:
     dias = max(0, min(30, int(dias)))
     vender_dias = max(0, min(10, int(vender_dias)))
 
@@ -246,17 +250,22 @@ with col2:
     st.dataframe(df_emps, use_container_width=True)
 
     with st.expander("📌 Marcar rescisão / mover para inativos"):
-        emp_sel = st.selectbox("Colaborador", df_emps["nome"].tolist() if not df_emps.empty else [])
+        emp_sel = st.selectbox(
+            "Colaborador",
+            df_emps["nome"].tolist() if not df_emps.empty else [],
+            key="colab_sb_rescisao",
+        )
         resc = st.date_input("Data de rescisão", value=date.today())
-        if st.button("Aplicar rescisão") and emp_sel:
-            with get_conn() as conn:
-                conn.execute(
-                    "UPDATE employees SET data_rescisao=?, ativo=0 WHERE company_id=? AND nome=?",
-                    (resc.isoformat(), cid, emp_sel),
-                )
-                conn.commit()
-            st.success("Rescisão aplicada. Registro movido para inativos.")
-            st.rerun()
+        if st.button("Aplicar rescisão"):
+            if emp_sel:
+                with get_conn() as conn:
+                    conn.execute(
+                        "UPDATE employees SET data_rescisao=?, ativo=0 WHERE company_id=? AND nome=?",
+                        (resc.isoformat(), cid, emp_sel),
+                    )
+                    conn.commit()
+                st.success("Rescisão aplicada. Registro movido para inativos.")
+                st.rerun()
 
 st.divider()
 st.subheader("Férias e afastamentos")
@@ -267,7 +276,11 @@ with get_conn() as conn:
         (cid,),
     ).fetchall()
 emp_map = {e["nome"]: (e["id"], e["data_admissao"]) for e in emps}
-emp_name = st.selectbox("Colaborador", list(emp_map.keys()) if emp_map else [])
+emp_name = st.selectbox(
+    "Colaborador",
+    list(emp_map.keys()) if emp_map else [],
+    key="colab_sb_ferias",
+)
 
 if emp_name:
     emp_id, adm_iso = emp_map[emp_name]
@@ -376,17 +389,23 @@ if emp_name:
                 buf_csv = io.StringIO()
                 resumo.to_csv(buf_csv, index=False, sep=";", decimal=",")
                 st.download_button(
-                    "⬇️ CSV (resumo)", buf_csv.getvalue().encode("utf-8"), file_name=f"ferias_{emp_id}_{ini.isoformat()}.csv", mime="text/csv"
+                    "⬇️ CSV (resumo)",
+                    buf_csv.getvalue().encode("utf-8"),
+                    file_name=f"ferias_{emp_id}_{ini.isoformat()}.csv",
+                    mime="text/csv",
+                    key="dl_csv_resumo",
                 )
                 try:
                     import xlsxwriter  # noqa: F401
-                    import pandas as _pd
                     xbuf = io.BytesIO()
                     with pd.ExcelWriter(xbuf, engine="xlsxwriter") as w:
                         resumo.to_excel(w, index=False, sheet_name="Férias")
                     st.download_button(
-                        "⬇️ XLSX (resumo)", xbuf.getvalue(), file_name=f"ferias_{emp_id}_{ini.isoformat()}.xlsx",
+                        "⬇️ XLSX (resumo)",
+                        xbuf.getvalue(),
+                        file_name=f"ferias_{emp_id}_{ini.isoformat()}.xlsx",
                         mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
+                        key="dl_xlsx_resumo",
                     )
                 except Exception:
                     st.info("Para XLSX, instale 'xlsxwriter'.")
@@ -454,7 +473,13 @@ if not df_list.empty:
     # CSV
     csv_buf = io.StringIO()
     df_list.to_csv(csv_buf, index=False, sep=";", decimal=",")
-    st.download_button("⬇️ CSV (lista)", csv_buf.getvalue().encode("utf-8"), file_name="colaboradores.csv", mime="text/csv")
+    st.download_button(
+        "⬇️ CSV (lista)",
+        csv_buf.getvalue().encode("utf-8"),
+        file_name="colaboradores.csv",
+        mime="text/csv",
+        key="dl_csv_lista",
+    )
 
     # XLSX
     try:
@@ -463,9 +488,11 @@ if not df_list.empty:
         with pd.ExcelWriter(xbuf, engine="xlsxwriter") as w:
             df_list.to_excel(w, index=False, sheet_name="Colaboradores")
         st.download_button(
-            "⬇️ XLSX (lista)", xbuf.getvalue(),
+            "⬇️ XLSX (lista)",
+            xbuf.getvalue(),
             file_name="colaboradores.xlsx",
             mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
+            key="dl_xlsx_lista",
         )
     except Exception:
         st.info("Para XLSX, instale 'xlsxwriter'.")
@@ -485,16 +512,24 @@ if not df_list.empty:
         c.drawString(20 * mm, y, "Lista de Colaboradores")
         y -= 8 * mm
         c.setFont("Helvetica", 9)
-        cols = ["matricula", "nome", "funcao", "salario", "data_admissao", "data_rescisao", "ativo"]
         for _, row in df_list.iterrows():
             linha = f"{row.get('matricula','')} | {row.get('nome','')} | {row.get('funcao','')} | R$ {row.get('salario',0):.2f} | {row.get('data_admissao','')} | {row.get('data_rescisao','')} | {'Ativo' if int(row.get('ativo',1))==1 else 'Inativo'}"
             wrapped = simpleSplit(linha, "Helvetica", 9, W - 40 * mm)
             for piece in wrapped:
                 if y < 20 * mm:
-                    c.showPage(); y = H - 20 * mm; c.setFont("Helvetica", 9)
+                    c.showPage()
+                    y = H - 20 * mm
+                    c.setFont("Helvetica", 9)
                 c.drawString(20 * mm, y, piece)
                 y -= 6 * mm
-        c.showPage(); c.save()
-        st.download_button("⬇️ PDF (lista)", pbuf.getvalue(), file_name="colaboradores.pdf", mime="application/pdf")
+        c.showPage()
+        c.save()
+        st.download_button(
+            "⬇️ PDF (lista)",
+            pbuf.getvalue(),
+            file_name="colaboradores.pdf",
+            mime="application/pdf",
+            key="dl_pdf_lista",
+        )
     except Exception:
         st.info("Para PDF, instale 'reportlab'.")
