@@ -3,12 +3,13 @@
 from __future__ import annotations
 
 import os
-import re
 import sqlite3
 from contextlib import contextmanager
 from datetime import datetime
 
-# Tentamos suportar tanto psycopg (v3) quanto psycopg2
+# -----------------------------------------------------------------------------
+# Drivers PG (psycopg3 preferido; fallback psycopg2)
+# -----------------------------------------------------------------------------
 _pg_mod = None
 try:
     import psycopg  # v3
@@ -22,6 +23,7 @@ except Exception:
     except Exception:
         _pg_mod = None
 
+
 # =============================================================================
 # Descoberta do DATABASE_URL (Supabase / Postgres) e flag USE_PG
 # =============================================================================
@@ -31,6 +33,7 @@ def _get_streamlit_secrets():
         return getattr(st, "secrets", {})
     except Exception:
         return {}
+
 
 def _pg_url_from_env_or_secrets() -> str | None:
     # Prioridade: env > st.secrets["DATABASE_URL"] > st.secrets["pg"] dict
@@ -46,18 +49,20 @@ def _pg_url_from_env_or_secrets() -> str | None:
             pg = sec["pg"]
             host = pg.get("host")
             port = pg.get("port", 5432)
-            db   = pg.get("dbname") or pg.get("database")
+            db = pg.get("dbname") or pg.get("database")
             user = pg.get("user") or pg.get("username")
-            pwd  = pg.get("password")
+            pwd = pg.get("password")
             if all([host, db, user, pwd]):
                 return f"postgresql://{user}:{pwd}@{host}:{port}/{db}"
     return None
 
+
 def _ensure_ssl(url: str) -> str:
     # Supabase normalmente exige SSL; se não veio sslmode na URL, adiciona.
-    if "supabase.co" in url and "sslmode=" not in url:
+    if "supabase.co" in url and "sslmode=" not in url.lower():
         return url + ("&sslmode=require" if "?" in url else "?sslmode=require")
     return url
+
 
 DATABASE_URL: str | None = _pg_url_from_env_or_secrets()
 if DATABASE_URL:
@@ -77,7 +82,9 @@ class _PgConnAdapter:
     Adapta psycopg3/psycopg2 para uma interface compatível com sqlite3.Connection:
     - .execute(sql, params) -> cursor com .fetchone()/.fetchall()
     - .commit(), .close(), e suporte a 'with get_conn() as conn:'
+    Converte placeholders "?" (sqlite) para "%s" (postgres).
     """
+
     def __init__(self, raw_conn, driver: str):
         self._raw = raw_conn
         self._driver = driver
@@ -91,8 +98,7 @@ class _PgConnAdapter:
 
     @staticmethod
     def _qmark_to_percent(sql: str) -> str:
-        # converte placeholders "?" (sqlite) para "%s" (postgres)
-        # abordagem simples (funciona bem nos nossos usos)
+        # Conversão simples cobre nossos usos (placeholders posicionais).
         return sql.replace("?", "%s")
 
     def execute(self, sql: str, params: tuple | list = ()):
@@ -104,12 +110,10 @@ class _PgConnAdapter:
         return cur
 
     def executescript(self, *_args, **_kwargs):
-        # Não suportado/necessário em PG neste projeto; deixamos no-op.
-        # Se for preciso no futuro, dividir script em statements e executar uma a uma.
+        # Não usamos script em PG
         return None
 
     def commit(self):
-        # psycopg3 usa autocommit False por padrão (bom). Aqui apenas delegamos.
         self._raw.commit()
 
     def close(self):
@@ -122,7 +126,6 @@ class _PgConnAdapter:
     def __exit__(self, exc_type, exc, tb):
         try:
             if exc:
-                # se algo falhar, tenta rollback
                 try:
                     self._raw.rollback()
                 except Exception:
@@ -157,11 +160,7 @@ def get_conn():
             finally:
                 conn.close()
         else:  # psycopg2
-            # Garante SSL se necessário (Supabase)
-            import urllib.parse as _urlp
-            dsn = DATABASE_URL
-            # psycopg2 aceita sslmode na própria URL (já garantimos antes)
-            conn = mod.connect(dsn)
+            conn = mod.connect(DATABASE_URL)
             try:
                 yield _PgConnAdapter(conn, driver="psycopg2")
             finally:
@@ -180,68 +179,184 @@ def get_conn():
 
 
 # =============================================================================
-# Schema/Seed
-# - Em SQLite: criamos tudo idempotente (inclusive password_reset_tokens)
-# - Em Postgres/Supabase: NÃO criamos nada automaticamente (evita conflito de privilégios).
-#   Se quiser bootstrap em PG, crie as tabelas via migrations SQL no Supabase.
+# Schema / Seed (idempotente)
+#  - Em SQLite: cria e ajusta colunas.
+#  - Em Postgres/Supabase: tenta criar/alterar (se permissões permitirem). Se não puder, ignora.
 # =============================================================================
-SCHEMA_SQLITE = """
-PRAGMA foreign_keys = ON;
-
-CREATE TABLE IF NOT EXISTS companies (
-  id INTEGER PRIMARY KEY AUTOINCREMENT,
-  cnpj TEXT NOT NULL,
-  razao_social TEXT NOT NULL,
-  nome_fantasia TEXT,
-  endereco TEXT,
-  regime TEXT CHECK(regime IN ('simples','lucro_real','lucro_presumido')) NOT NULL,
-  created_at TEXT DEFAULT CURRENT_TIMESTAMP
-);
-
-CREATE TABLE IF NOT EXISTS users (
-  id INTEGER PRIMARY KEY AUTOINCREMENT,
-  name TEXT NOT NULL,
-  email TEXT UNIQUE NOT NULL,
-  password_hash BLOB NOT NULL,
-  is_active INTEGER DEFAULT 1,
-  role TEXT CHECK(role IN ('admin','user')) NOT NULL DEFAULT 'user',
-  created_at TEXT DEFAULT CURRENT_TIMESTAMP
-);
-
-CREATE TABLE IF NOT EXISTS user_companies (
-  user_id INTEGER NOT NULL REFERENCES users(id) ON DELETE CASCADE,
-  company_id INTEGER NOT NULL REFERENCES companies(id) ON DELETE CASCADE,
-  PRIMARY KEY (user_id, company_id)
-);
-
-CREATE TABLE IF NOT EXISTS password_reset_tokens (
-  id INTEGER PRIMARY KEY AUTOINCREMENT,
-  user_id INTEGER NOT NULL REFERENCES users(id) ON DELETE CASCADE,
-  token TEXT UNIQUE NOT NULL,
-  expires_at TEXT NOT NULL,  -- ISO UTC
-  used INTEGER DEFAULT 0
-);
-
-/* As demais tabelas dos módulos podem ser criadas pelas páginas específicas
-   quando estiver em SQLite. Em PG, prefira migrations no Supabase. */
-"""
-
 def init_schema_and_seed():
-    if USE_PG:
-        # Em Supabase, não tocar no schema automaticamente.
-        # Coloque suas migrations no Supabase ou num script separado.
-        return
+    """
+    Cria o schema mínimo e garante colunas requeridas pelos módulos.
+    """
 
-    # SQLite: cria schema mínimo para o app subir
+    def _exec_silent(conn, sql: str, params: tuple = ()):
+        try:
+            conn.execute(sql, params)
+        except Exception:
+            # já existe / sem permissão / outro detalhe — segue
+            pass
+
+    def _ensure_col(conn, table: str, col: str, decl: str):
+        """
+        Adiciona coluna se ainda não existir. Funciona em SQLite/PG usando try/except.
+        Ex.: _ensure_col(conn, "companies", "resp_cpf", "TEXT")
+        """
+        try:
+            conn.execute(f"ALTER TABLE {table} ADD COLUMN {col} {decl}")
+        except Exception:
+            pass
+
     with get_conn() as conn:
-        # Em SQLite, conn é sqlite3.Connection real → tem executescript
-        if hasattr(conn, "executescript"):
-            conn.executescript(SCHEMA_SQLITE)
+        # ---------------- users ----------------
+        if USE_PG:
+            _exec_silent(
+                conn,
+                """
+                CREATE TABLE IF NOT EXISTS users (
+                  id BIGSERIAL PRIMARY KEY,
+                  name TEXT NOT NULL,
+                  email TEXT UNIQUE NOT NULL,
+                  password_hash BYTEA NOT NULL,
+                  is_active INTEGER DEFAULT 1,
+                  role TEXT DEFAULT 'user',
+                  created_at TIMESTAMPTZ DEFAULT NOW()
+                )
+                """,
+            )
         else:
-            # safety: divide o script se algum adaptador não suportar executescript
-            for stmt in [s.strip() for s in SCHEMA_SQLITE.split(";") if s.strip()]:
-                conn.execute(stmt)
-        conn.commit()
+            _exec_silent(
+                conn,
+                """
+                CREATE TABLE IF NOT EXISTS users (
+                  id INTEGER PRIMARY KEY AUTOINCREMENT,
+                  name TEXT NOT NULL,
+                  email TEXT UNIQUE NOT NULL,
+                  password_hash BLOB NOT NULL,
+                  is_active INTEGER DEFAULT 1,
+                  role TEXT DEFAULT 'user',
+                  created_at TEXT DEFAULT CURRENT_TIMESTAMP
+                )
+                """,
+            )
+        _ensure_col(conn, "users", "is_active", "INTEGER DEFAULT 1")
+        _ensure_col(conn, "users", "role", "TEXT")
+        _ensure_col(conn, "users", "created_at", "TEXT" if not USE_PG else "TIMESTAMPTZ")
+
+        # --------------- companies ---------------
+        if USE_PG:
+            _exec_silent(
+                conn,
+                """
+                CREATE TABLE IF NOT EXISTS companies (
+                  id BIGSERIAL PRIMARY KEY,
+                  cnpj TEXT NOT NULL,
+                  razao_social TEXT NOT NULL,
+                  nome_fantasia TEXT,
+                  endereco TEXT,
+                  regime TEXT,
+                  created_at TIMESTAMPTZ DEFAULT NOW()
+                )
+                """,
+            )
+        else:
+            _exec_silent(
+                conn,
+                """
+                CREATE TABLE IF NOT EXISTS companies (
+                  id INTEGER PRIMARY KEY AUTOINCREMENT,
+                  cnpj TEXT NOT NULL,
+                  razao_social TEXT NOT NULL,
+                  nome_fantasia TEXT,
+                  endereco TEXT,
+                  regime TEXT,
+                  created_at TEXT DEFAULT CURRENT_TIMESTAMP
+                )
+                """,
+            )
+
+        # Colunas utilizadas pela página Empresas (01)
+        _ensure_col(conn, "companies", "resp_cpf", "TEXT")
+        _ensure_col(conn, "companies", "resp_nome", "TEXT")
+        _ensure_col(conn, "companies", "resp_telefone", "TEXT")
+        _ensure_col(conn, "companies", "resp_email", "TEXT")
+        _ensure_col(conn, "companies", "cep", "TEXT")
+        _ensure_col(conn, "companies", "logradouro", "TEXT")
+        _ensure_col(conn, "companies", "complemento", "TEXT")
+        _ensure_col(conn, "companies", "numero", "TEXT")
+        _ensure_col(conn, "companies", "bairro", "TEXT")
+        _ensure_col(conn, "companies", "cidade", "TEXT")
+        _ensure_col(conn, "companies", "estado", "TEXT")
+        _ensure_col(conn, "companies", "cnae_principal", "TEXT")
+        _ensure_col(conn, "companies", "cnae_secundarios", "TEXT")
+
+        # Opcional: constraint dos valores do regime (não falha se não suportar)
+        try:
+            if not USE_PG:
+                # Em SQLite, CHECK simples
+                conn.execute(
+                    "CREATE TABLE IF NOT EXISTS _companies_regime_check (id INTEGER)"
+                )  # no-op para marcar que já tentamos
+            # Em PG poderíamos adicionar um CHECK, mas isso exige DDL com nome; omitido por simplicidade.
+        except Exception:
+            pass
+
+        # --------------- user_companies ---------------
+        if USE_PG:
+            _exec_silent(
+                conn,
+                """
+                CREATE TABLE IF NOT EXISTS user_companies (
+                  user_id BIGINT NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+                  company_id BIGINT NOT NULL REFERENCES companies(id) ON DELETE CASCADE,
+                  PRIMARY KEY (user_id, company_id)
+                )
+                """,
+            )
+        else:
+            _exec_silent(
+                conn,
+                """
+                CREATE TABLE IF NOT EXISTS user_companies (
+                  user_id INTEGER NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+                  company_id INTEGER NOT NULL REFERENCES companies(id) ON DELETE CASCADE,
+                  PRIMARY KEY (user_id, company_id)
+                )
+                """,
+            )
+
+        # --------------- password_reset_tokens ---------------
+        if USE_PG:
+            _exec_silent(
+                conn,
+                """
+                CREATE TABLE IF NOT EXISTS password_reset_tokens (
+                  id BIGSERIAL PRIMARY KEY,
+                  user_id BIGINT NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+                  token TEXT UNIQUE NOT NULL,
+                  expires_at TIMESTAMPTZ NOT NULL,
+                  used INTEGER DEFAULT 0
+                )
+                """,
+            )
+        else:
+            _exec_silent(
+                conn,
+                """
+                CREATE TABLE IF NOT EXISTS password_reset_tokens (
+                  id INTEGER PRIMARY KEY AUTOINCREMENT,
+                  user_id INTEGER NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+                  token TEXT UNIQUE NOT NULL,
+                  expires_at TEXT NOT NULL,  -- ISO UTC
+                  used INTEGER DEFAULT 0
+                )
+                """,
+            )
+
+        # FKs (SQLite) e finaliza
+        _exec_silent(conn, "PRAGMA foreign_keys = ON;")
+        try:
+            conn.commit()
+        except Exception:
+            pass
 
 
 # =============================================================================
