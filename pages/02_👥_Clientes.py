@@ -265,25 +265,22 @@ if rows:
     )
 
     # PDF (lista simples)
-    from fpdf import FPDF
+from fpdf import FPDF
 
-    def _pdf(df_: pd.DataFrame) -> bytes:
-        pdf = FPDF()
-        pdf.add_page()
-        pdf.set_font("Helvetica", "B", 14)
-        pdf.cell(0, 10, "Clientes", ln=1)
-        pdf.set_font("Helvetica", size=10)
-        for _, row in df_.iterrows():
-            linha = f"{row.get('nome','')}"
-            if row.get('doc'): linha += f" | {row['doc']}"
-            if row.get('email'): linha += f" | {row['email']}"
-            if row.get('phone'): linha += f" | {row['phone']}"
-            pdf.multi_cell(0, 6, linha)
-        return pdf.output(dest="S").encode("latin-1")
+def _pdf(df_: pd.DataFrame) -> bytes:
+    pdf = FPDF()
+    pdf.add_page()
+    pdf.set_auto_page_break(auto=True, margin=15)
+    pdf.set_font("Helvetica", "B", 14)
+    pdf.cell(0, 10, "Clientes", ln=1)
+    pdf.set_font("Helvetica", size=10)
 
-    st.download_button(
-        "⬇️ PDF",
-        data=_pdf(df),
-        file_name="clientes.pdf",
-        mime="application/pdf",
-    )
+    for _, row in df_.iterrows():
+        linha = f"{row.get('nome','')}"
+        if row.get('doc'): linha += f" | {row['doc']}"
+        if row.get('email'): linha += f" | {row['email']}"
+        if row.get('phone'): linha += f" | {row['phone']}"
+        pdf.multi_cell(0, 6, linha)
+
+    out = pdf.output(dest="S")  # fpdf2 retorna bytes; fpdf clássico retorna str
+    return out if isinstance(out, (bytes, bytearray)) else out.encode("latin-1", "ignore")
