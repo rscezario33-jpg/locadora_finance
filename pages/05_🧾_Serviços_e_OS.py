@@ -1,9 +1,12 @@
-﻿# ============================================================
+﻿# -*- coding: utf-8 -*-
+# ============================================================
 # 05_🧾_Serviços_e_OS.py
 # ============================================================
 from __future__ import annotations
+
 import io
 from datetime import date, datetime, timedelta
+
 import pandas as pd
 import streamlit as st
 
@@ -150,6 +153,9 @@ def ensure_schema_srv():
         conn.commit()
 
 
+# ----------------------------------------------------------------
+# Boot básico
+# ----------------------------------------------------------------
 require_company()
 ensure_schema_srv()
 cid = require_company_with_picker()
@@ -236,14 +242,13 @@ with st.form("f_srv"):
             base_day = dt.day
             base_month_first = dt.replace(day=1)
             for i in range(int(parcelas)):
-                # avança ~1 mês por vez (31 dias é aproximação; suficiente aqui)
+                # avança ~1 mês por vez (31 dias é aproximação)
                 due_month_approx = base_month_first + timedelta(days=31 * i)
-                # tenta usar o mesmo "dia" do serviço, se existir no mês; senão, último dia do mês
                 year, month = due_month_approx.year, due_month_approx.month
                 try:
                     due = date(year, month, base_day)
                 except ValueError:
-                    # pega último dia do mês
+                    # último dia do mês
                     nxt = (date(year, month, 1) + timedelta(days=31)).replace(day=1)
                     due = nxt - timedelta(days=1)
                 conn.execute(
@@ -371,7 +376,7 @@ if not df_srvs.empty:
             st.warning("Registros excluídos.")
             st.rerun()
 
-    # Impressão em lote (PDF se disponível)
+    # Impressão em lote (PDF se disponível) — sem 'nonlocal'
     with colB:
         if st.button("🖨️ Imprimir OS (PDF)", key="btn_pdf_lote") and ids_sel:
             try:
@@ -384,6 +389,17 @@ if not df_srvs.empty:
                 c = canvas.Canvas(pbuf, pagesize=A4)
                 W, H = A4
 
+                def draw_line(cnv, y_pos, txt):
+                    parts = simpleSplit(txt, "Helvetica", 10, W - 40 * mm)
+                    for piece in parts:
+                        if y_pos < 20 * mm:
+                            cnv.showPage()
+                            cnv.setFont("Helvetica", 10)
+                            y_pos = H - 20 * mm
+                        cnv.drawString(20 * mm, y_pos, piece)
+                        y_pos -= 6 * mm
+                    return y_pos
+
                 with get_conn() as conn:
                     for sid in ids_sel:
                         srv = conn.execute(
@@ -392,10 +408,14 @@ if not df_srvs.empty:
                         ).fetchone()
                         if not srv:
                             continue
-                        cli = conn.execute(
-                            "SELECT * FROM clients WHERE id=?",
-                            (srv["client_id"],),
-                        ).fetchone() if srv.get("client_id") else None
+
+                        row_keys = list(srv.keys()) if hasattr(srv, "keys") else []
+                        client_id = srv["client_id"] if ("client_id" in row_keys) else None
+                        cli = (
+                            conn.execute("SELECT * FROM clients WHERE id=?", (client_id,)).fetchone()
+                            if client_id else None
+                        )
+
                         emps = conn.execute(
                             """
                             SELECT e.nome
@@ -405,6 +425,7 @@ if not df_srvs.empty:
                             """,
                             (sid,),
                         ).fetchall()
+
                         eqps = conn.execute(
                             """
                             SELECT e.descricao
@@ -415,35 +436,51 @@ if not df_srvs.empty:
                             (sid,),
                         ).fetchall()
 
+                        # helper seguro para ler campos
+                        def rv(row, key, default=""):
+                            try:
+                                v = row[key]
+                                return v if v is not None else default
+                            except Exception:
+                                return default
+
                         c.setFont("Helvetica-Bold", 14)
                         c.drawString(20 * mm, H - 20 * mm, f"Ordem de Serviço #{sid}")
                         c.setFont("Helvetica", 10)
                         y = H - 30 * mm
 
-                        def line(txt: str):
-                            nonlocal y
-                            parts = simpleSplit(txt, "Helvetica", 10, W - 40 * mm)
-                            for piece in parts:
-                                if y < 20 * mm:
-                                    c.showPage()
-                                    c.setFont("Helvetica", 10)
-                                    y = H - 20 * mm
-                                c.drawString(20 * mm, y, piece)
-                                y -= 6 * mm
+                        y = draw_line(c, y, f"Cliente: {cli['nome'] if cli else '-'}")
+                        y = draw_line(c, y, f"Data: {rv(srv, 'data', '')}")
+                        y = draw_line(c, y, f"Descrição: {rv(srv, 'descricao', '-')}")
 
-                        line(f"Cliente: {cli['nome'] if cli else '-'}")
-                        line(f"Data: {srv.get('data','')}")
-                        line(f"Descrição: {srv.get('descricao','-')}")
-                        line(
-                            f"Valor total: R$ {srv.get('valor_total',0.0):.2f} - "
-                            f"Forma/Parcelas: {srv.get('forma_pagamento','')}/{srv.get('parcelas','')}"
+                        valor_total = float(rv(srv, "valor_total", 0.0) or 0.0)
+                        y = draw_line(
+                            c,
+                            y,
+                            f"Valor total: R$ {valor_total:.2f} - "
+                            f"Forma/Parcelas: {rv(srv,'forma_pagamento','')}/{rv(srv,'parcelas','')}",
                         )
-                        line(
-                            f"Classificação: {'Fiscal' if int(srv.get('fiscal',1))==1 else 'Gerencial'} - "
-                            f"Status: {srv.get('status','')}"
+
+                        fiscal_flag = rv(srv, "fiscal", 1)
+                        try:
+                            fiscal_flag = int(fiscal_flag)
+                        except Exception:
+                            fiscal_flag = 1
+                        y = draw_line(
+                            c,
+                            y,
+                            f"Classificação: {'Fiscal' if fiscal_flag == 1 else 'Gerencial'} - "
+                            f"Status: {rv(srv,'status','')}",
                         )
-                        line("Colaboradores: " + (", ".join([e["nome"] for e in emps]) if emps else "-"))
-                        line("Equipamentos: " + (", ".join([e["descricao"] for e in eqps]) if eqps else "-"))
+
+                        y = draw_line(
+                            c, y,
+                            "Colaboradores: " + (", ".join([e["nome"] for e in emps]) if emps else "-"),
+                        )
+                        y = draw_line(
+                            c, y,
+                            "Equipamentos: " + (", ".join([e["descricao"] for e in eqps]) if eqps else "-"),
+                        )
                         c.showPage()
 
                 c.save()
